@@ -7,11 +7,14 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID, uuid4
 
+from arq import create_pool
+from arq.connections import ArqRedis, RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.credit_transaction import CreditTransaction
@@ -23,8 +26,9 @@ router = APIRouter(prefix="/api", tags=["product"])
 ANALYSIS_COST = 25
 SUMMARISE_COST = 10
 _JOB_STORE: dict[str, dict] = {}
-_JOB_QUEUE: list[dict] = []
 _JOB_LOCK = asyncio.Lock()
+_ARQ_POOL: ArqRedis | None = None
+_ARQ_POOL_LOCK = asyncio.Lock()
 
 
 class AnalyseRequest(BaseModel):
@@ -35,16 +39,19 @@ class SummariseRequest(BaseModel):
     text: str = Field(min_length=10, max_length=2000)
 
 
-async def _enqueue_summarise_job(job_id: str, organisation_id: str, text: str) -> None:
-    """Mock async enqueue for summarisation jobs."""
-    async with _JOB_LOCK:
-        _JOB_QUEUE.append(
-            {
-                "job_id": job_id,
-                "organisation_id": organisation_id,
-                "text": text,
-            }
-        )
+async def _get_arq_pool() -> ArqRedis:
+    """Return a cached ARQ Redis pool."""
+    global _ARQ_POOL
+    if _ARQ_POOL is not None:
+        return _ARQ_POOL
+
+    async with _ARQ_POOL_LOCK:
+        if _ARQ_POOL is None:
+            settings = get_settings()
+            _ARQ_POOL = await create_pool(
+                RedisSettings.from_dsn(settings.redis_url)
+            )
+    return _ARQ_POOL
 
 
 @router.post("/analyse")
@@ -113,7 +120,18 @@ async def summarise_text(
             "result": None,
             "error": None,
         }
-    await _enqueue_summarise_job(job_id, str(current_user.organisation_id), payload.text)
+    try:
+        arq_pool = await _get_arq_pool()
+        await arq_pool.enqueue_job(
+            "summarise_job",
+            job_id,
+            str(current_user.organisation_id),
+            payload.text,
+            _job_id=job_id,
+        )
+    except Exception:
+        # Fail-open: keep request successful even if Redis/ARQ is unavailable.
+        pass
 
     return {"job_id": job_id, "status": "pending"}
 

@@ -21,6 +21,8 @@ def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     from app.api.routes.auth import router as auth_router
     from app.api.routes.credits import router as credits_router
+    from app.api.routes.health import router as health_router
+    from app.api.routes.oauth import router as oauth_router
     from app.api.routes.product import router as product_router
     from app.middleware.error_handler import error_handling_middleware_dispatch
     from app.middleware.logging_middleware import logging_middleware_dispatch
@@ -41,6 +43,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(credits_router)
     app.include_router(product_router)
+    app.include_router(health_router)
+    app.include_router(oauth_router)
 
     @app.get("/")
     async def root():

@@ -1,9 +1,34 @@
 const output = document.getElementById("output");
 const tokenInput = document.getElementById("token");
 const apiBaseInput = document.getElementById("apiBase");
+const API_BASE_STORAGE_KEY = "nexusapi_api_base";
+const TOKEN_STORAGE_KEY = "nexusapi_token";
+
+function getDefaultApiBase() {
+  // On Vercel, default to deployed Cloud Run backend.
+  if (window.location.hostname.endsWith("vercel.app")) {
+    return "https://nexusapi-994745516874.us-central1.run.app";
+  }
+  return "http://localhost:8000";
+}
+
+function loadStoredApiBase() {
+  const stored = localStorage.getItem(API_BASE_STORAGE_KEY);
+  const base = (stored || "").trim() || getDefaultApiBase();
+  apiBaseInput.value = base;
+}
+
+function storeApiBase(base) {
+  const normalized = (base || "").trim().replace(/\/$/, "");
+  if (!normalized) {
+    localStorage.removeItem(API_BASE_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
+}
 
 function loadStoredToken() {
-  const token = localStorage.getItem("nexusapi_token");
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   if (token) {
     tokenInput.value = token;
   }
@@ -14,12 +39,12 @@ function storeToken(token) {
     return;
   }
   tokenInput.value = token;
-  localStorage.setItem("nexusapi_token", token);
+  localStorage.setItem(TOKEN_STORAGE_KEY, token);
 }
 
 function clearToken() {
   tokenInput.value = "";
-  localStorage.removeItem("nexusapi_token");
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 function parseHashParams() {
@@ -50,6 +75,10 @@ async function apiCall(path, options = {}) {
 
   if (!base) {
     throw new Error("API Base URL is required.");
+  }
+
+  if (!/^https?:\/\//i.test(base)) {
+    throw new Error("API Base URL must start with http:// or https://");
   }
 
   const headers = {
@@ -110,10 +139,20 @@ document.getElementById("clearTokenBtn").addEventListener("click", () => {
 tokenInput.addEventListener("change", () => {
   const token = tokenInput.value.trim();
   if (token) {
-    localStorage.setItem("nexusapi_token", token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
   } else {
-    localStorage.removeItem("nexusapi_token");
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
   }
+});
+
+apiBaseInput.addEventListener("change", () => {
+  storeApiBase(apiBaseInput.value);
+});
+
+apiBaseInput.addEventListener("blur", () => {
+  const normalized = apiBaseInput.value.trim().replace(/\/$/, "");
+  apiBaseInput.value = normalized;
+  storeApiBase(normalized);
 });
 
 document.getElementById("getMeBtn").addEventListener("click", async () => {
@@ -184,5 +223,6 @@ document.getElementById("jobStatusBtn").addEventListener("click", async () => {
   }
 });
 
+loadStoredApiBase();
 loadStoredToken();
 handleOAuthCallbackFromHash();

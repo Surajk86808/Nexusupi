@@ -5,8 +5,8 @@ Product analysis routes.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
-from uuid import UUID, uuid4
+import json
+from uuid import UUID
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -18,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.redis import get_redis_client
 from app.models.credit_transaction import CreditTransaction
+from app.models.job import Job
 from app.models.user import User
 from app.services.credit_service import (
-    IDEMPOTENCY_TTL_HOURS,
     DeductionResult,
     InsufficientCreditsError,
     deduct_credits,
@@ -31,12 +32,8 @@ router = APIRouter(prefix="/api", tags=["product"])
 
 ANALYSIS_COST = 25
 SUMMARISE_COST = 10
-_JOB_STORE: dict[str, dict] = {}
-_JOB_LOCK = asyncio.Lock()
 _ARQ_POOL: ArqRedis | None = None
 _ARQ_POOL_LOCK = asyncio.Lock()
-_IDEMPOTENCY_STORE: dict[str, dict] = {}
-_IDEMPOTENCY_LOCK = asyncio.Lock()
 
 
 class AnalyseRequest(BaseModel):
@@ -48,7 +45,7 @@ class SummariseRequest(BaseModel):
 
 
 def _idempotency_store_key(organisation_id: str, endpoint: str, key: str) -> str:
-    return f"{organisation_id}:{endpoint}:{key}"
+    return f"idem:{organisation_id}:{endpoint}:{key}"
 
 
 async def _get_cached_idempotent_response(
@@ -58,17 +55,16 @@ async def _get_cached_idempotent_response(
 ) -> dict | None:
     if not idempotency_key:
         return None
-
-    now = datetime.now(timezone.utc)
     cache_key = _idempotency_store_key(organisation_id, endpoint, idempotency_key)
-    async with _IDEMPOTENCY_LOCK:
-        cached = _IDEMPOTENCY_STORE.get(cache_key)
-        if not cached:
+    try:
+        redis_client = await get_redis_client()
+        payload = await redis_client.get(cache_key)
+        if not payload:
             return None
-        if cached["expires_at"] < now:
-            _IDEMPOTENCY_STORE.pop(cache_key, None)
-            return None
-        return cached["response"]
+        decoded = json.loads(payload)
+        return decoded if isinstance(decoded, dict) else None
+    except Exception:
+        return None
 
 
 async def _cache_idempotent_response(
@@ -80,11 +76,11 @@ async def _cache_idempotent_response(
     if not idempotency_key:
         return
     cache_key = _idempotency_store_key(organisation_id, endpoint, idempotency_key)
-    async with _IDEMPOTENCY_LOCK:
-        _IDEMPOTENCY_STORE[cache_key] = {
-            "response": response_payload,
-            "expires_at": datetime.now(timezone.utc) + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
-        }
+    try:
+        redis_client = await get_redis_client()
+        await redis_client.set(cache_key, json.dumps(response_payload), ex=86400)
+    except Exception:
+        pass
 
 
 async def _get_arq_pool() -> ArqRedis:
@@ -201,41 +197,33 @@ async def summarise_text(
         if cached is not None:
             return cached
 
-    job_id = str(uuid4())
-    async with _JOB_LOCK:
-        _JOB_STORE[job_id] = {
-            "job_id": job_id,
-            "organisation_id": str(current_user.organisation_id),
-            "status": "pending",
-            "result": None,
-            "error": None,
-        }
+    job = Job(
+        organisation_id=current_user.organisation_id,
+        status="pending",
+        result=None,
+        error=None,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    job_id = str(job.id)
+
     try:
         arq_pool = await asyncio.wait_for(_get_arq_pool(), timeout=0.5)
         await asyncio.wait_for(
             arq_pool.enqueue_job(
                 "summarise_job",
-                job_id,
-                org_id,
+                str(job.id),
+                str(current_user.organisation_id),
                 payload.text,
-                _job_id=job_id,
+                _job_id=str(job.id),
             ),
             timeout=0.5,
         )
         response_payload = {"job_id": job_id, "status": "pending"}
     except Exception as exc:
-        async with _JOB_LOCK:
-            existing = _JOB_STORE.get(job_id, {})
-            existing.update(
-                {
-                    "job_id": job_id,
-                    "organisation_id": org_id,
-                    "status": "pending",
-                    "result": None,
-                    "error": f"enqueue_failed: {exc.__class__.__name__}",
-                }
-            )
-            _JOB_STORE[job_id] = existing
+        job.error = f"enqueue_failed: {exc.__class__.__name__}"
+        await db.commit()
         response_payload = {"job_id": job_id, "status": "pending"}
 
     await _cache_idempotent_response(org_id, "summarise", idempotency_key, response_payload)
@@ -245,27 +233,28 @@ async def summarise_text(
 @router.get("/jobs/{job_id}")
 async def get_job_status(
     job_id: UUID,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Return status/result metadata for an async job."""
-    async with _JOB_LOCK:
-        job = _JOB_STORE.get(str(job_id))
+    job = (
+        await db.execute(
+            select(Job).where(
+                Job.id == job_id,
+                Job.organisation_id == current_user.organisation_id,
+            )
+        )
+    ).scalar_one_or_none()
 
-    if job is None:
+    if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found",
         )
 
-    if str(job.get("organisation_id")) != str(current_user.organisation_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant mismatch",
-        )
-
     return {
-        "job_id": job["job_id"],
-        "status": job["status"],
-        "result": job.get("result"),
-        "error": job.get("error"),
+        "job_id": str(job.id),
+        "status": job.status,
+        "result": job.result,
+        "error": job.error,
     }

@@ -24,18 +24,26 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# Handle Neon SSL - asyncpg needs ssl in connect_args not URL param
+_connect_args = {}
+_db_url = settings.database_url
+
+if "ssl=require" in _db_url:
+    _db_url = _db_url.replace("?ssl=require", "").replace("&ssl=require", "")
+    _connect_args["ssl"] = "require"
+
 # Determine whether we're using SQLite; some pool options are not supported.
-_url = make_url(settings.database_url)
+_url = make_url(_db_url)
 _is_sqlite = _url.get_backend_name() == "sqlite"
 
 _engine_kwargs: dict = {
     "echo": settings.debug,
     "pool_pre_ping": True,
-    "pool_recycle": 1800,  # recycle connections every 30 minutes
+    "pool_recycle": 1800,
+    "connect_args": _connect_args,
 }
 
 if not _is_sqlite:
-    # QueuePool options appropriate for PostgreSQL/asyncpg and similar drivers.
     _engine_kwargs.update(
         {
             "pool_size": 5,
@@ -43,8 +51,7 @@ if not _is_sqlite:
         }
     )
 
-# Async SQLAlchemy engine configured for PostgreSQL (or SQLite in tests)
-engine: AsyncEngine = create_async_engine(settings.database_url, **_engine_kwargs)
+engine: AsyncEngine = create_async_engine(_db_url, **_engine_kwargs)
 
 # Async session factory
 AsyncSessionFactory = async_sessionmaker(

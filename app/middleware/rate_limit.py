@@ -40,13 +40,23 @@ async def _get_redis_client() -> Redis:
     async with _REDIS_LOCK:
         if _REDIS_CLIENT is None:
             settings = get_settings()
-            _REDIS_CLIENT = Redis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                socket_connect_timeout=0.2,
-                socket_timeout=0.2,
-            )
+            url = settings.redis_url
+            kwargs = {
+                "decode_responses": True,
+                "socket_connect_timeout": 1.0,
+                "socket_timeout": 1.0,
+            }
+            if url.startswith("rediss://"):
+                import ssl as ssl_module
+
+                kwargs["ssl_cert_reqs"] = None
+            _REDIS_CLIENT = Redis.from_url(url, **kwargs)
     return _REDIS_CLIENT
+
+
+async def get_redis_client() -> Redis:
+    """Compatibility alias for callers/tests patching this symbol."""
+    return await _get_redis_client()
 
 
 async def _check_and_record_memory(
@@ -125,14 +135,14 @@ async def rate_limit_middleware_dispatch(request: Request, call_next: Callable) 
     try:
         retry_after = await _check_and_record_redis(org_id, time.time(), max_requests, window_seconds)
     except Exception:
-        # Fallback to in-memory limiter when Redis is unavailable.
-        retry_after = await _check_and_record_memory(org_id, time.time(), max_requests, window_seconds)
-        if retry_after is None and settings.rate_limit_fail_open:
-            return await call_next(request)
-        if retry_after is None and not settings.rate_limit_fail_open:
+        if settings.rate_limit_fail_open:
+            # Redis down, fail open: use memory limiter as best-effort
+            retry_after = await _check_and_record_memory(org_id, time.time(), max_requests, window_seconds)
+        else:
+            # Redis down, fail closed: block all requests
             return JSONResponse(
                 status_code=503,
-                content={"detail": "Rate limiter backend unavailable"},
+                content={"detail": "Rate limiter unavailable"},
             )
 
     if retry_after is not None:

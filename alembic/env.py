@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from app.core.config import get_settings
 from app.models import Base
 from app.models.credit_transaction import CreditTransaction  # noqa: F401
+from app.models.job import Job  # noqa: F401
 from app.models.organisation import Organisation  # noqa: F401
 from app.models.user import User  # noqa: F401
 
@@ -81,10 +82,18 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    """Run migrations in online mode with an async engine."""
+    url = database_url
+    connect_args = {}
+
+    # Strip ssl param from URL and pass via connect_args for asyncpg
+    if "ssl=require" in url:
+        url = url.replace("?ssl=require", "").replace("&ssl=require", "")
+        connect_args["ssl"] = "require"
+
     connectable: AsyncEngine = create_async_engine(
-        database_url,
+        url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

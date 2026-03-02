@@ -150,7 +150,7 @@ async def test_tenant_isolation_enforced():
 
         read_resp = client.get(f"/api/jobs/{job_id}", headers={"Authorization": f"Bearer {token_b}"})
 
-    assert read_resp.status_code == 403
+    assert read_resp.status_code == 404
 
 
 @pytest.mark.asyncio

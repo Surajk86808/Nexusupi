@@ -3,6 +3,7 @@ NexusAPI — Multi-Tenant Credit-Gated Backend
 FastAPI application entrypoint.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,10 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown."""
-    from app.core.config import get_settings
-    from app.core.logging import configure_logging
-    get_settings()
-    configure_logging()
+    try:
+        from app.core.config import get_settings
+        from app.core.logging import configure_logging
+        get_settings()
+        configure_logging()
+    except Exception as e:
+        print(f"Startup warning: {e}")
     yield
 
 
@@ -40,6 +44,10 @@ def create_app() -> FastAPI:
     )
     settings = get_settings()
     cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if "http://localhost:5500" not in cors_origins:
+        cors_origins.append("http://localhost:5500")
+    if "http://127.0.0.1:5500" not in cors_origins:
+        cors_origins.append("http://127.0.0.1:5500")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -51,16 +59,21 @@ def create_app() -> FastAPI:
     app.middleware("http")(error_handling_middleware_dispatch)
     app.middleware("http")(logging_middleware_dispatch)
     app.middleware("http")(rate_limit_middleware_dispatch)
+    app.include_router(health_router)
+    app.include_router(oauth_router)
     app.include_router(auth_router)
     app.include_router(credits_router)
     app.include_router(product_router)
-    app.include_router(health_router)
-    app.include_router(oauth_router)
 
     @app.get("/")
     async def root():
         """Root health check."""
         return {"status": "ok", "service": "nexusapi"}
+
+    logger = logging.getLogger("nexusapi")
+    for route in app.routes:
+        if hasattr(route, "methods"):
+            logger.info(f"Route registered: {route.methods} {route.path}")
 
     return app
 

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Google OAuth
     google_client_id: str = ""
     google_client_secret: str = ""
+    frontend_oauth_success_url: str = ""
 
     # Rate Limiting
     rate_limit_per_minute: int = 100
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     debug: bool = False
     log_level: str = "INFO"
+    cors_origins: str = "http://localhost:5500,http://127.0.0.1:5500"
 
     @field_validator("jwt_secret")
     @classmethod
@@ -53,6 +55,20 @@ class Settings(BaseSettings):
         if len(v) < 32:
             raise ValueError("JWT_SECRET must be at least 32 characters")
         return v
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def validate_debug(cls, v: object) -> bool:
+        """Normalize relaxed debug env values used by some environments."""
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            lowered = v.strip().lower()
+            if lowered in {"1", "true", "yes", "on", "debug"}:
+                return True
+            if lowered in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return bool(v)
 
     @field_validator("log_level")
     @classmethod

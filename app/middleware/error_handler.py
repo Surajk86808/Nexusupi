@@ -44,7 +44,15 @@ def _structured_error(
     message: str,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    merged_headers = dict(headers or {})
+    source_headers = dict(headers or {})
+    merged_headers: dict[str, str] = {}
+    # Only forward protocol-relevant headers that should survive
+    # response body rewrites.
+    for key in ("WWW-Authenticate", "Retry-After"):
+        if key in source_headers:
+            merged_headers[key] = source_headers[key]
+        elif key.lower() in source_headers:
+            merged_headers[key] = source_headers[key.lower()]
     merged_headers["X-Request-ID"] = request_id
     return JSONResponse(
         status_code=status_code,

@@ -55,9 +55,10 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['organisation_id'], ['organisations.id'], ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='RESTRICT'),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('organisation_id', 'idempotency_key', name='uq_credit_transactions_org_idempotency_key')
     )
-    op.create_index(op.f('ix_credit_transactions_idempotency_key'), 'credit_transactions', ['idempotency_key'], unique=True)
+    op.create_index(op.f('ix_credit_transactions_idempotency_key'), 'credit_transactions', ['idempotency_key'], unique=False)
     op.create_index(op.f('ix_credit_transactions_organisation_id'), 'credit_transactions', ['organisation_id'], unique=False)
     op.create_index(op.f('ix_credit_transactions_user_id'), 'credit_transactions', ['user_id'], unique=False)
     # ### end Alembic commands ###

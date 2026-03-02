@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import UniqueConstraint
 from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import IntegrityError
 
@@ -66,11 +67,17 @@ async def test_credit_transaction_model_imports_correctly():
     assert "created_at" in table.c
     assert "balance" not in table.c
 
-    assert table.c.idempotency_key.unique is True
+    assert table.c.idempotency_key.unique is not True
     index_cols = [{col.name for col in idx.columns} for idx in table.indexes]
     assert any("organisation_id" in cols for cols in index_cols)
     assert any("user_id" in cols for cols in index_cols)
     assert any("idempotency_key" in cols for cols in index_cols)
+    unique_constraints = [
+        {col.name for col in cons.columns}
+        for cons in table.constraints
+        if isinstance(cons, UniqueConstraint)
+    ]
+    assert any({"organisation_id", "idempotency_key"} == cols for cols in unique_constraints)
 
 
 @pytest.mark.asyncio
@@ -230,6 +237,51 @@ async def test_idempotency_key_uniqueness_enforced():
         with pytest.raises(IntegrityError):
             await session.commit()
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_can_repeat_across_organisations():
+    db, _, Organisation, User, CreditTransaction = await _prepare_schema()
+
+    async with db.AsyncSessionFactory() as session:
+        org_a = Organisation(name="Org I", slug="b3-org-i")
+        org_b = Organisation(name="Org J", slug="b3-org-j")
+        user_a = User(
+            email="b3-i@example.com",
+            name="User I",
+            google_id="b3-google-i",
+            organisation=org_a,
+            role="member",
+        )
+        user_b = User(
+            email="b3-j@example.com",
+            name="User J",
+            google_id="b3-google-j",
+            organisation=org_b,
+            role="member",
+        )
+        session.add_all([org_a, org_b, user_a, user_b])
+        await session.flush()
+
+        session.add_all(
+            [
+                CreditTransaction(
+                    organisation_id=org_a.id,
+                    user_id=user_a.id,
+                    amount=25,
+                    reason="org_a_txn",
+                    idempotency_key="shared-key",
+                ),
+                CreditTransaction(
+                    organisation_id=org_b.id,
+                    user_id=user_b.id,
+                    amount=30,
+                    reason="org_b_txn",
+                    idempotency_key="shared-key",
+                ),
+            ]
+        )
+        await session.commit()
 
 
 @pytest.mark.asyncio

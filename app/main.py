@@ -5,6 +5,7 @@ FastAPI application entrypoint.
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 @asynccontextmanager
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     from app.middleware.error_handler import error_handling_middleware_dispatch
     from app.middleware.logging_middleware import logging_middleware_dispatch
     from app.middleware.rate_limit import rate_limit_middleware_dispatch
+    from app.core.config import get_settings
 
     app = FastAPI(
         title="NexusAPI",
@@ -35,6 +37,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
+    )
+    settings = get_settings()
+    cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     app.middleware("http")(error_handling_middleware_dispatch)

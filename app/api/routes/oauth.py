@@ -5,11 +5,11 @@ Google OAuth routes.
 from __future__ import annotations
 
 import os
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,7 +47,7 @@ async def google_auth_redirect() -> RedirectResponse:
 async def google_auth_callback(
     code: str | None = None,
     db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
+) -> Response:
     """Handle Google OAuth callback and return NexusAPI JWT."""
     if code is None or not code.strip():
         return JSONResponse(
@@ -110,30 +110,33 @@ async def google_auth_callback(
 
         org_query = select(Organisation).where(Organisation.slug == email_domain)
         organisation = (await db.execute(org_query)).scalar_one_or_none()
-        role = UserRole.MEMBER
+        created_organisation = False
 
         if organisation is None:
             organisation = Organisation(name=email_domain, slug=email_domain)
             db.add(organisation)
             await db.flush()
-            role = UserRole.ADMIN
+            created_organisation = True
 
         user_query = select(User).where(User.google_id == google_id)
         user = (await db.execute(user_query)).scalar_one_or_none()
+        resolved_role = UserRole.ADMIN if created_organisation else UserRole.MEMBER
         if user is None:
             user = User(
                 email=email,
                 name=name or email_domain,
                 google_id=google_id,
                 organisation_id=organisation.id,
-                role=role,
+                role=resolved_role,
             )
             db.add(user)
         else:
             user.email = email
             user.name = name or user.name
             user.organisation_id = organisation.id
-            user.role = role
+            # Never silently downgrade existing admins on re-login.
+            if user.role != UserRole.ADMIN:
+                user.role = resolved_role
 
         await db.commit()
         await db.refresh(user)
@@ -146,16 +149,18 @@ async def google_auth_callback(
             }
         )
 
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "access_token": jwt_token,
-                "token_type": "bearer",
-                "user_id": str(user.id),
-                "organisation_id": str(organisation.id),
-                "role": user.role.value,
-            },
-        )
+        frontend_success_url = (settings.frontend_oauth_success_url or "").strip()
+        payload = {
+            "access_token": jwt_token,
+            "token_type": "bearer",
+            "user_id": str(user.id),
+            "organisation_id": str(organisation.id),
+            "role": user.role.value,
+        }
+        if frontend_success_url:
+            fragment = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in payload.items())
+            return RedirectResponse(url=f"{frontend_success_url}#{fragment}")
+        return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
     except Exception:
         await db.rollback()
         return JSONResponse(

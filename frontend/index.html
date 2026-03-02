@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NexusAPI Frontend</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>NexusAPI Frontend</h1>
+      <p>Standalone UI for the NexusAPI backend.</p>
+    </header>
+
+    <section class="card">
+      <h2>Connection</h2>
+      <label for="apiBase">API Base URL</label>
+      <input id="apiBase" type="text" value="http://localhost:8000" />
+
+      <label for="token">Bearer Token</label>
+      <textarea id="token" rows="3" placeholder="Paste JWT access token"></textarea>
+      <div class="inline-fields">
+        <button id="googleLoginBtn" type="button">Sign in with Google</button>
+        <button id="clearTokenBtn" type="button">Sign out</button>
+      </div>
+      <p class="hint">Google login opens backend OAuth and stores token automatically on return.</p>
+    </section>
+
+    <section class="card grid">
+      <div>
+        <h2>Auth</h2>
+        <button id="getMeBtn">GET /me</button>
+      </div>
+
+      <div>
+        <h2>Credits</h2>
+        <button id="balanceBtn">GET /credits/balance</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Analyse</h2>
+      <textarea id="analyseText" rows="4" placeholder="Enter text to analyse"></textarea>
+      <button id="analyseBtn">POST /api/analyse</button>
+    </section>
+
+    <section class="card">
+      <h2>Summarise</h2>
+      <textarea id="summariseText" rows="4" placeholder="Enter text to summarise"></textarea>
+      <button id="summariseBtn">POST /api/summarise</button>
+
+      <div class="inline-fields">
+        <input id="jobId" type="text" placeholder="Job ID" />
+        <button id="jobStatusBtn">GET /api/jobs/{job_id}</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Response</h2>
+      <pre id="output">Run an action to see API responses.</pre>
+    </section>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

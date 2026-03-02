@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -19,6 +21,13 @@ class InsufficientCreditsError(Exception):
 
 
 _ORG_LOCKS: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+IDEMPOTENCY_TTL_HOURS = 24
+
+
+@dataclass(slots=True)
+class DeductionResult:
+    transaction: CreditTransaction
+    reused: bool
 
 
 async def deduct_credits(
@@ -28,7 +37,8 @@ async def deduct_credits(
     amount: int,
     reason: str,
     idempotency_key: str | None = None,
-) -> CreditTransaction:
+    include_status: bool = False,
+) -> CreditTransaction | DeductionResult:
     """
     Atomically deduct credits by appending a negative ledger transaction.
     """
@@ -41,15 +51,26 @@ async def deduct_credits(
         tx_ctx = db.begin_nested() if db.in_transaction() else db.begin()
         async with tx_ctx:
             if idempotency_key:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=IDEMPOTENCY_TTL_HOURS)
                 existing = (
                     await db.execute(
                         select(CreditTransaction).where(
-                            CreditTransaction.idempotency_key == idempotency_key
+                            CreditTransaction.organisation_id == organisation_id,
+                            CreditTransaction.idempotency_key == idempotency_key,
                         )
                     )
                 ).scalar_one_or_none()
                 if existing is not None:
-                    return existing
+                    existing_created_at = existing.created_at
+                    if existing_created_at.tzinfo is None:
+                        existing_created_at = existing_created_at.replace(tzinfo=timezone.utc)
+                    if existing_created_at >= cutoff:
+                        if include_status:
+                            return DeductionResult(transaction=existing, reused=True)
+                        return existing
+                    # Allow key reuse after TTL window.
+                    existing.idempotency_key = None
+                    await db.flush()
 
             await db.execute(
                 select(CreditTransaction.id)
@@ -77,4 +98,6 @@ async def deduct_credits(
             )
             db.add(txn)
             await db.flush()
+            if include_status:
+                return DeductionResult(transaction=txn, reused=False)
             return txn

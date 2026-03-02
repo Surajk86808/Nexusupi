@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -21,6 +21,13 @@ class CreditTransaction(UUIDMixin, TimestampMixin, Base):
     """Immutable credit ledger event."""
 
     __tablename__ = "credit_transactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id",
+            "idempotency_key",
+            name="uq_credit_transactions_org_idempotency_key",
+        ),
+    )
 
     organisation_id: Mapped[UUID] = mapped_column(
         ForeignKey("organisations.id", ondelete="RESTRICT"),
@@ -43,7 +50,6 @@ class CreditTransaction(UUIDMixin, TimestampMixin, Base):
     idempotency_key: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
-        unique=True,
         index=True,
     )
 

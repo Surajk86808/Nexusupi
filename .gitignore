@@ -50,3 +50,6 @@ alembic/versions/__pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+
+PROJECT_EXPLANATION.md

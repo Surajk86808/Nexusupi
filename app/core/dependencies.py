@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ def _unauthorized(detail: str) -> HTTPException:
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None, alias="Authorization"),
+    request: Request = None,  # type: ignore[assignment]
 ) -> User:
     """
     Resolve currently authenticated user from Authorization Bearer token.
@@ -54,5 +55,9 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant mismatch",
         )
+
+    if request is not None:
+        request.state.org_id = str(user.organisation_id)
+        request.state.user_id = str(user.id)
 
     return user

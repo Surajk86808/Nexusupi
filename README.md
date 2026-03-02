@@ -5,7 +5,7 @@ NexusAPI is a multi-tenant FastAPI backend with JWT authentication, Google OAuth
 ## Prerequisites
 
 - Python 3.11+
-- PostgreSQL
+- PostgreSQL (local) or Neon Postgres
 - Redis
 
 ## Local Setup
@@ -41,6 +41,20 @@ cp .env.example .env
 
 Then edit `.env` with real values.
 
+### Use Neon DB
+
+Set `DATABASE_URL` in `.env` to your Neon connection string:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://<user>:<password>@<neon-host>/<db_name>?ssl=require
+```
+
+Then run migrations normally:
+
+```bash
+alembic upgrade head
+```
+
 5. Run database migrations:
 
 ```bash
@@ -64,14 +78,19 @@ uvicorn app.main:app --reload
 | `JWT_EXPIRE_MINUTES` | Configured JWT expiry duration in minutes. | `60` |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID for login. | `your-google-client-id.apps.googleusercontent.com` |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret for token exchange. | `your-google-client-secret` |
+| `GOOGLE_REDIRECT_URI` | Redirect URI configured in Google OAuth app. | `http://localhost:8000/auth/callback` |
+| `FRONTEND_OAUTH_SUCCESS_URL` | Frontend URL to receive token after OAuth success. | `http://localhost:5500` |
 | `RATE_LIMIT_PER_MINUTE` | Allowed requests per minute per key. | `100` |
 | `RATE_LIMIT_WINDOW_SECONDS` | Sliding/fixed rate-limit window in seconds. | `60` |
 | `RATE_LIMIT_FAIL_OPEN` | If `true`, allow requests when limiter backend is unavailable. | `true` |
 | `ENVIRONMENT` | Runtime environment label. | `development` |
 | `DEBUG` | Enables debug behavior/log verbosity toggles where supported. | `false` |
 | `LOG_LEVEL` | Base application log level. | `INFO` |
+| `CORS_ORIGINS` | Comma-separated frontend origins allowed to call API. | `http://localhost:5500,http://127.0.0.1:5500` |
 
 Optional OAuth callback override: `GOOGLE_REDIRECT_URI` (default is `http://localhost:8000/auth/callback`).
+
+Neon example for `DATABASE_URL`: `postgresql+asyncpg://<user>:<password>@<neon-host>/<db_name>?ssl=require`
 
 ## Run with Docker
 
@@ -84,6 +103,25 @@ docker-compose up --build
 ```bash
 pytest tests/ -v
 ```
+
+## Google OAuth Setup
+
+1. Open Google Cloud Console and create/select a project.
+2. Go to `APIs & Services -> OAuth consent screen` and configure app name, support email, and test users.
+3. Go to `APIs & Services -> Credentials -> Create Credentials -> OAuth client ID`.
+4. Choose `Web application`.
+5. Add authorized redirect URI: `http://localhost:8000/auth/callback`.
+6. Copy generated Client ID and Client Secret into `.env`:
+
+```bash
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
+FRONTEND_OAUTH_SUCCESS_URL=http://localhost:5500
+```
+
+7. Start backend and frontend.
+8. Open frontend and click `Sign in with Google`.
 
 ## API Examples
 
